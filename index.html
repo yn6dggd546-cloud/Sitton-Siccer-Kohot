@@ -34,7 +34,8 @@ header h1{margin:0;font-size:clamp(20px,5.5vw,26px);font-weight:800;letter-spaci
 nav{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-top:12px;background:rgba(0,0,0,.18);padding:4px;border-radius:14px}
 nav button{border:0;background:transparent;color:#fff;font:inherit;font-size:14.5px;padding:8px 4px;border-radius:10px;cursor:pointer;opacity:.82}
 nav button[aria-selected="true"]{opacity:1;background:#fff;color:var(--hero1);font-weight:700}
-main{padding-top:16px;padding-bottom:60px}
+main.wrap{padding-top:20px;padding-bottom:70px}
+main.wrap>.tabp>.card:first-child,main.wrap>.tabp>div:first-child{margin-top:0}
 .tabp[hidden]{display:none}
 /* cards */
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:16px;margin-bottom:14px;box-shadow:var(--shadow)}
@@ -160,6 +161,7 @@ select{padding:8px 10px;font-size:14.5px}
   </div>
   <div class="card">
     <h2><span class="n">1</span>רשימת השחקנים</h2>
+    <div class="row" style="margin-top:6px"><button class="btn sec sm" id="pasteRoster">📋 הדבקה</button><button class="btn sec sm" id="clearRoster">🗑️ ניקוי הרשימה</button></div>
     <textarea id="roster" placeholder="למשל: 18: אלון, יונתן, אנטו, רום, משה כהן (בחירה 4), …"></textarea>
     <div class="note">מדביקים את הודעת הרשימה כמו שהיא. כל מה שאחרי ״סטנד ביי״ לא נספר. לאורחים ולחיזוקים מוסיפים ״(בחירה 4)״ או ״(בחירה 4-5)״, למשל ״חיזוק שוער (בחירה 3)״. ״רגיל״ שם דגש על איזון, ״מגוון״ נמנע מלהרכיב שוב את הזוגות מהשבועות האחרונים, ו״ערבוב״ מוותר על קצת איזון כדי לשנות כמה שיותר.</div>
     <div class="opts">
@@ -209,6 +211,17 @@ select{padding:8px 10px;font-size:14.5px}
   <div class="card">
     <h2>היסטוריית משחקים</h2>
     <div class="note">לכל קבוצה מזינים כמה משחקים ניצחה באותו ערב, ואם ידוע גם תיקו והפסדים. מספיק להזין רק ניצחונות: החישוב משווה בין הקבוצות. אחרי שמירת התוצאה, המקדמים של השחקנים מתעדכנים.</div>
+  </div>
+  <div class="card">
+    <h2>הוספת משחק שהיה</h2>
+    <p class="note">מדביקים את הודעת הכוחות כמו שנשלחה לקבוצה. אם בסוף כל שורה כתוב מספר הניצחונות (למשל ״- 5 נצחונות״), התוצאה נשמרת ישר. אחרת אפשר להזין אותה אחר כך ברשימה למטה.</p>
+    <div class="row" style="margin-top:6px"><button class="btn sec sm" id="pastePast">📋 הדבקה</button><button class="btn sec sm" id="clearPast">🗑️ ניקוי</button></div>
+    <textarea id="pastGame" placeholder="⚪ לבן - הכהן, גיא, אורי, רועי, ירדן, דן - 5 נצחונות&#10;🔵⚫ כחול/שחור - אורן, תום, … - 3 נצחונות&#10;🔴 אדום - עילם, חורי, … - 3 נצחונות"></textarea>
+    <div class="savebox" style="margin-top:4px;padding-top:0;border:0">
+      <label class="field">תאריך המשחק<input type="date" id="pastDate"></label>
+      <button class="btn" id="addPast">הוספת המשחק</button>
+    </div>
+    <p class="note" id="pastPrev" style="margin-top:8px"></p>
   </div>
   <div id="glist"></div>
 </section>
@@ -429,6 +442,10 @@ $('#chips').addEventListener('change',e=>{const s=e.target.closest('select');if(
   renderChips();if(S)renderTeams();renderPlayers();});
 $('#roster').addEventListener('input',()=>{clearTimeout(parse._t);parse._t=setTimeout(parse,300)});
 
+async function pasteInto(sel,after){try{const t=await navigator.clipboard.readText();if(!t){toast('אין טקסט להדבקה');return}$(sel).value=t;after&&after()}catch(e){$(sel).focus();toast('אין גישה ללוח – לחצו לחיצה ארוכה בתיבה ובחרו ״הדבקה״')}}
+$('#pasteRoster').onclick=()=>pasteInto('#roster',parse);
+$('#clearRoster').onclick=()=>{$('#roster').value='';guestR={};parse();if(S){S=null;hist=[];sel=null;editingId=null;$('#undo').disabled=true;$('#resCard').hidden=true;$('#outCard').hidden=true;updSaveBtn()}$('#roster').focus();toast('הרשימה נוקתה')};
+
 /* ===================== solver ===================== */
 const ab=p=>6-p.r;
 const pk=(a,b)=>a<b?a+'|'+b:b+'|'+a;
@@ -568,6 +585,53 @@ $('#glist').addEventListener('click',e=>{
     $('#resCard').hidden=false;$('#outCard').hidden=false;renderTeams();updSaveBtn();showTab('board');toast('המשחק נטען לעריכה');
   }
 });
+
+/* ---- add a past game from a pasted teams message ---- */
+const COLWORDS=[[/^לבן/,0],[/^אדום/,1],[/^(כחול\s*\/\s*שחור|שחור\s*\/\s*כחול|כחול|שחור)/,2],[/^צהוב/,3]];
+function parsePastGame(txt){
+  const teams=[];
+  txt.split('\n').forEach(raw=>{
+    let l=raw.replace(/[\u{1F300}-\u{1FAFF}\u2600-\u27BF\uFE0F\u200e\u200f\u2066-\u2069*_~]/gu,'').trim();
+    if(!l||!l.includes(','))return;
+    let c=null;for(const [re,ci] of COLWORDS){const m=l.match(re);if(m){c=ci;l=l.slice(m[0].length);break}}
+    l=l.replace(/^\s*[:\-–]\s*/,'');
+    let w=null;const wm=l.match(/\s*[-–]?\s*(\d+)\s*(?:נצחונות|ניצחונות|נצחון|ניצחון|ניצ׳|נ׳)\s*\.?\s*$/)||l.match(/\s*[-–]\s*(\d+)\s*$/);
+    if(wm){w=+wm[1];l=l.slice(0,wm.index)}
+    let cap=null;const cm=l.match(/^([^,:]{1,30}):\s*(.+)$/);if(cm){cap=cm[1].trim();l=cm[2]}
+    const players=[];
+    const all=(cap?[cap]:[]).concat(l.split(','));
+    all.map(x=>x.trim()).filter(Boolean).forEach(tok=>{
+      const m=tok.match(/\(\s*בחירה\s*([\d.]+)\s*(?:[-–]\s*([\d.]+))?\s*\)/);
+      const name=tok.replace(/\(.*?\)/g,'').trim();if(!name)return;
+      if(m)players.push({n:name,g:1,r:m[2]?(+m[1]+ +m[2])/2:+m[1],tag:m[0].replace(/\s+/g,' ')});
+      else if(/חיזוק/.test(name))players.push({n:name,g:1,r:3,tag:null});
+      else players.push({n:name});
+    });
+    if(players.length>=2)teams.push({c,cap,players,w});
+  });
+  const used=new Set(teams.map(t=>t.c).filter(c=>c!=null));let nx=0;
+  teams.forEach(t=>{if(t.c==null||teams.filter(u=>u.c===t.c).length>1&&t!==teams.find(u=>u.c===t.c)){while(used.has(nx))nx++;t.c=nx;used.add(nx)}});
+  return teams;
+}
+function previewPast(){const ts=parsePastGame($('#pastGame').value);
+  $('#pastPrev').textContent=ts.length?ts.map(t=>`${COLORS[t.c][1]}: ${t.players.length} שחקנים${t.w!=null?`, ${t.w} ניצחונות`:''}`).join(' · '):'';}
+$('#pastGame').addEventListener('input',previewPast);
+$('#pastePast').onclick=()=>pasteInto('#pastGame',previewPast);
+$('#clearPast').onclick=()=>{$('#pastGame').value='';previewPast();$('#pastGame').focus()};
+$('#pastDate').value=today();
+$('#addPast').onclick=()=>{
+  if(!doc){toast('צריך קודם לטעון נתונים');showTab('settings');return}
+  const ts=parsePastGame($('#pastGame').value);
+  if(ts.length<2){toast('לא זיהיתי לפחות שתי קבוצות. כל קבוצה בשורה נפרדת, עם פסיקים בין השמות.');return}
+  const hasW=ts.some(t=>t.w!=null);
+  const g={id:Date.now().toString(36),date:$('#pastDate').value||today(),k:ts.length,
+    teams:ts.map(t=>({c:t.c,cap:t.cap,players:t.players})),res:hasW?ts.map(t=>({w:t.w||0,d:0,l:0})):null};
+  doc.games.push(g);commit();refreshP();renderGames();renderPlayers();
+  $('#pastGame').value='';$('#pastPrev').textContent='';
+  const unknown=[...new Set(ts.flatMap(t=>t.players.filter(p=>!p.g&&baseR(p.n)==null).map(p=>p.n)))];
+  toast(hasW?'המשחק והתוצאה נשמרו':'המשחק נשמר – אפשר להזין תוצאה למטה');
+  if(unknown.length)setTimeout(()=>toast(`שחקנים חדשים בלי מקדם: ${unknown.join(', ')} – אפשר לקבוע להם מקדם בלשונית ״שחקנים״`),2400);
+};
 
 /* ===================== players tab ===================== */
 function allNames(){if(!doc)return[];const s=new Set([...Object.keys(doc.base),...Object.keys(doc.extra)]);doc.games.forEach(g=>g.teams.forEach(t=>t.players.forEach(p=>{if(!p.g)s.add(p.n)})));return [...s]}
